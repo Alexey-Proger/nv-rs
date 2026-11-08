@@ -471,18 +471,20 @@ pub fn save_game(e: &mut Engine, name: u32) {
     write_file(e, &path, &bytes);
 }
 
-/// Whether a save gets a co-save: a variable to write, another plugin's section kept, or a
-/// delayed call waiting. A save without one loads as xNVSE loads a save made without it: a new
-/// game for the extender (its `NewGame` message), the variables, calls and handlers of the game
-/// before not reset. That is only right when the game saved had nothing of the extender's, so
-/// anything that would have made xNVSE's co-save read differently counts. xNVSE writes one on
-/// every save; the port leaves unmodded play without the extra file (both presets).
+/// Whether a save gets a co-save: a variable to write, another plugin's section kept, a
+/// delayed call waiting or an event handler set. A save without one loads as xNVSE loads a save
+/// made without it: a new game for the extender (its `NewGame` message), the variables, calls
+/// and handlers of the game before not reset. That is only right when the game saved had
+/// nothing of the extender's, so anything that would have made xNVSE's co-save read
+/// differently counts. xNVSE writes one on every save; the port leaves unmodded play without
+/// the extra file (both presets).
 pub fn something_to_save(e: &mut Engine, chunks: &[Chunk], kept: &[cosave::Kept]) -> bool {
     chunks
         .iter()
         .any(|c| c.kind == tag(b"ARVR") || c.kind == tag(b"STVR"))
         || !kept.is_empty()
         || tick::has_pending(e)
+        || events::has_handlers(e)
 }
 
 // ---- loading ----

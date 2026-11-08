@@ -59,6 +59,7 @@ The game's own `iFPSClamp` ignores `FrameLimit`: a clamp is a fixed step with no
 | Mod fit worn question | `007838a0` | `NV_MOD_WORN` | Fitting a weapon mod asks whether the mod is worn before the mod is removed from the inventory, not after. The original asks after (a slip: it means the weapon), through the mod's extra list the removal has just deleted; it nearly always answers no, but a yes rebuilds the inventory list, which frees the weapon entry the mod menu keeps, and closing the menu then re-equips through it and the game stops. A mod is never worn, so the answer is the original's usual no, and no released memory is read. Every other click of the menu is the original's. Below |
 | Dialogue topic index | `00619820`, `0061a310`, `0061a380`, `0061a5a0`, `0045dfe0` | `NV_TOPIC_INDEX` | Finding which topic holds a dialogue info (`TESTopic::GetOwnerTopic`) no longer walks the topic list and every info in it: the original does that for each info a plugin changes (YUP and the add-ons: 5,837 times), so a dialogue mod's load grew with its size times the game's. Every topic `TESTopic::InsertInfo` links an info into (the one place an info enters a topic) is kept beside it; a search asks only those topics, with the original's own search (`00619e10`), which hold this info first by its id, and takes the first of them in the topic list's order, from a copy of the list's order that is made again whenever the list may have changed in a way that matters (its sort, the data handler's `ClearData`, an insert of a topic the copy holds, which can list it again earlier, a changed head node, or a topic inserted since that the copy doesn't hold). So the answer is the walk's, tie-breaks included (an info in two topics, a twin id, the list's order and end). `NV_TOPIC_INDEX_CHECK=1` with `NV_TOPIC_INDEX=1` (alone it is a test variable, which makes the run vanilla) runs the original's walk beside every search and stops the game at the first difference. With the fix on, the typed `topic_search` family (the walk) goes by address for the run, since the fix registers over one of its members. Below |
 | Co-save keeps other plugins | none (a flag the extender reads) | `NV_COSAVE_KEEP` | A co-save's sections of plugins that are not built in (JIP LN NVSE's, until it is) are kept as they were read and written back on each save, so a save brought from a real modded installation keeps them. xNVSE writes only the plugins it has loaded, so off (vanilla) they go at the next save, as with xNVSE. Below |
+| Script error loop guard | none (a flag the extender reads) | `NV_NVSE_ERROR_GUARD` | An error raised while a script's `RuntimeScriptError` handler runs (in the handler itself, or at the call depth limit when handlers call functions that fail) is not sent to the handlers again. xNVSE sends it again, which recurses until the stack runs out and the game stops; off (vanilla), the port does the same. Below |
 
 ### What high frame rates do to the original's code
 
@@ -221,9 +222,12 @@ difference that holds in both:
 - **Co-save keeps other plugins** (the row above): the maintainer's decision, 2026-11-08. The
   sections are kept byte for byte from the co-save of the game loaded (none after a new game or a
   save without a co-save) and written after xNVSE's own section.
+- **Script error loop guard** (the row above): the maintainer's decision, 2026-11-08 (review of
+  #329). One error reaches the handlers once; the console still shows every error.
 - **A co-save only when there is something in it** (both presets, the maintainer, 2026-11-08):
   xNVSE writes a `.nvse` beside every save; the port writes one only when a string or array
-  variable is saved, another plugin's section is kept or a delayed call waits, so unmodded play
+  variable is saved, another plugin's section is kept, a delayed call waits or a script has set
+  an event handler, so unmodded play
   leaves no extra file, and removes one left from an earlier save of the same name. xNVSE loads a
   save without a co-save as a new game for the extender (its `NewGame` message; the variables and
   delayed calls of the game before are not reset, `Serialization.cpp` `HandleLoadGame`), which is
