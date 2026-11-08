@@ -677,6 +677,23 @@ fn prepare_prefs(
     Ok(())
 }
 
+/// The profile's `plugins.txt`, switched on for the game's own language plugins
+/// ([`mods::language_list`]): written when it isn't what the game's `Data` folder asks for, and
+/// nothing at all when the folder has none, so an English copy keeps the file away. The names,
+/// when this call wrote them.
+fn switch_on_language_plugins(profile: &Profile, data: &Path) -> std::io::Result<Option<String>> {
+    let text = mods::language_list(data);
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let path = profile.local.join("FalloutNV\\plugins.txt");
+    if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+        return Ok(None);
+    }
+    tables::write_whole(&path, text.as_bytes())?;
+    Ok(Some(text.lines().collect::<Vec<_>>().join(", ")))
+}
+
 /// The newest logs stay; older game logs go (only `game-*.log` in the package's own folder).
 fn tidy_logs(logs: &Path) {
     let Ok(entries) = std::fs::read_dir(logs) else {
@@ -925,6 +942,23 @@ fn play(
             data: install.join("Data"),
             folder: install,
         };
+    }
+
+    // The game's own language plugins: the original switches these on in the player's
+    // `plugins.txt`, which this profile does not carry, so a non-English installation showed its
+    // DLC in English (measured 2026-11-08: the menu is Russian, from the ini's `sTestFile2`, what
+    // the `<name>_lang.esp` files localize is not). Playing with mods writes its own list.
+    if !options.mods {
+        match switch_on_language_plugins(profile, &game.data) {
+            Ok(Some(names)) => package.log(&format!(
+                "switched on the game's own language plugins: {names}"
+            )),
+            Ok(None) => {}
+            Err(e) => package.log(&format!(
+                "{}: {e}",
+                profile.local.join("FalloutNV\\plugins.txt").display()
+            )),
+        }
     }
 
     // The tables.
@@ -1340,6 +1374,66 @@ mod tests {
         assert!(dir.join("game-202604.log").exists());
         assert!(dir.join("launcher.log").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The profile's plugin list keeps the game's own language plugins on: written when the game
+    /// folder asks for them, left alone when it already says the same, and never made for an
+    /// English copy.
+    #[test]
+    fn the_profile_switches_on_the_games_language_plugins() {
+        let dir = scratch("language-plugins");
+        let data = dir.join("game\\Data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("FalloutNV.esm"), b"esm").unwrap();
+        std::fs::write(data.join("FalloutNV_lang.esp"), lang_esp("FalloutNV.esm")).unwrap();
+        let profile = Profile::at(&dir.join("userdata"), "game");
+        profile.make().unwrap();
+        let written = profile.local.join("FalloutNV\\plugins.txt");
+        assert_eq!(
+            switch_on_language_plugins(&profile, &data)
+                .unwrap()
+                .as_deref(),
+            Some("FalloutNV_lang.esp")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&written).unwrap(),
+            "FalloutNV_lang.esp\r\n"
+        );
+        assert!(switch_on_language_plugins(&profile, &data)
+            .unwrap()
+            .is_none());
+        // A plugin whose master isn't in the folder stays off, so the list is unchanged.
+        std::fs::write(data.join("DeadMoney_lang.esp"), lang_esp("DeadMoney.esm")).unwrap();
+        assert!(switch_on_language_plugins(&profile, &data)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            std::fs::read_to_string(&written).unwrap(),
+            "FalloutNV_lang.esp\r\n"
+        );
+        // Nothing to localize: no file at all.
+        std::fs::remove_file(data.join("FalloutNV_lang.esp")).unwrap();
+        std::fs::remove_file(&written).unwrap();
+        assert!(switch_on_language_plugins(&profile, &data)
+            .unwrap()
+            .is_none());
+        assert!(!written.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `TES4` header naming one master: what a test writes as a plugin file.
+    fn lang_esp(master: &str) -> Vec<u8> {
+        let mut fields = b"HEDR\x0c\0".to_vec();
+        fields.extend_from_slice(&[0; 12]);
+        fields.extend_from_slice(b"MAST");
+        fields.extend_from_slice(&((master.len() + 1) as u16).to_le_bytes());
+        fields.extend_from_slice(master.as_bytes());
+        fields.push(0);
+        let mut file = b"TES4".to_vec();
+        file.extend_from_slice(&(fields.len() as u32).to_le_bytes());
+        file.extend_from_slice(&[0; 16]);
+        file.extend_from_slice(&fields);
+        file
     }
 
     fn scratch(name: &str) -> PathBuf {

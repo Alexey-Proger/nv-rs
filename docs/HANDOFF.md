@@ -7,6 +7,40 @@ machinery runs.
 
 ## Resume here
 
+### Claude, 2026-11-08 (a non-English copy kept its DLC in English)
+
+- **Symptom, from the player's own PC:** a Steam multi-language copy (`...\Fallout New Vegas enplczru`,
+  Russian chosen) shows a Russian menu but English text in the DLC.
+- **Why:** the language's text sits in the game's own `*_lang.esp` plugins (`FalloutNV_lang.esp` and
+  one per DLC). The original switches those on in the player's `%LOCALAPPDATA%\FalloutNV\plugins.txt`.
+  The package plays from its own profile (`userdata\game\AppData\Local\FalloutNV`), which held no
+  `plugins.txt` at all, and the mods profile's generated list named only the masters a mod needs. So
+  only what the ini still asks for came through: `sTestFile2=FalloutNV_lang.esp`, copied with the
+  player's `Fallout.ini`, localizes the base game — which is why the menu was Russian while the DLC
+  was not. `mods::plugin_list` never named a `*_lang.esp`.
+- **Measured on that copy with the packaged preview (2026-11-08), engine run through `NV_SHOT`:**
+  profile without `plugins.txt` — menu Russian (`Далее, Новая, Загрузить, Настройки, Команда,
+  Дополнения, Выход`); its `Fallout.ini` with `STestFile2` emptied — menu English (`Continue, New,
+  Load, ...`), so that line is what carries the base game; the player's own `plugins.txt` copied into
+  the profile — the run loads all ten language plugins and stops on nothing.
+- **The fix (`scripts/launcher`):** `mods::language_plugins` reads the game's own `Data` folder and
+  takes every `*_lang.esp` whose masters are all there (one with a missing master would stop the
+  game with "unable to find masterfile"); `switch_on_language_plugins` writes them to the profile's
+  `plugins.txt` before the run, and rewrites it when the game's folder asks for something else; the
+  mods list gets them after the mod files, and a player's own `mods\plugins.txt` is still used as it
+  is. An English copy has none, so nothing changes there. The engine port itself needed no change:
+  the game's own `Main::InitTES` and `TESDataHandler` do the loading.
+- **Checks:** launcher 35 tests (three new: the list from a `Data` folder, the mods list, the
+  profile's file), clippy `-D warnings` and fmt clean. Built `--profile play` and `--release`
+  `nv-viewer` and the release `Play.exe`; the release package run logged `switched on the game's own
+  language plugins: CaravanPack_lang.esp, ... TribalPack_lang.esp` and played to frame 2184 with 0
+  untranslated addresses. The player checked the DLC screens: Russian.
+- **Next:** the maintainer may package this into the preview ZIP; `distribution/READ ME.txt` and
+  `docs/PREVIEW_TESTERS.md` still list "languages other than English" as never tried, which one
+  Russian Steam copy now contradicts.
+- **That PC:** Rust was not installed; rustup 1.29.3 and the pinned 1.99.1 toolchain went to
+  `D:\Rust\.cargo` and `D:\Rust\.rustup` (asked for by drive), not on `PATH`.
+
 ### Claude, 2026-11-06 (the Windows preview package)
 
 - **What it is:** `scripts/package-playtest.ps1` makes one ZIP: `Play.exe` (`scripts/launcher`), `app\FalloutNV.exe` (nv-viewer `--release`, static C runtime, build paths remapped), the three table tools, launchers, the settings tool, the READ ME and the notices. docs/PLAYTESTING.md says what `Play.exe` does and what the tables can't cover; docs/MAINTAINING.md lists the ZIP's contents and why each is allowed; docs/PREVIEW_TESTERS.md is the checklist for other PCs. Nothing is released: the maintainer decides.

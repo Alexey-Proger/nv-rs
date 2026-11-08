@@ -73,6 +73,57 @@ pub fn plugin_list(plugins: &[(String, Vec<u8>)]) -> String {
     out
 }
 
+/// The first `limit` bytes of `path`, for a plugin's header (`TES4` sits at its start); `None`
+/// when the file can't be read.
+fn first_bytes(path: &Path, limit: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut head = Vec::new();
+    file.take(limit).read_to_end(&mut head).ok()?;
+    Some(head)
+}
+
+/// The game's own language plugins in a `Data` folder, in name order: every `*_lang.esp` whose
+/// masters are all there. The original switches these on through the player's `plugins.txt`; the
+/// package's own profile doesn't carry that file, and a non-English installation then keeps its
+/// DLC in English (`FalloutNV_lang.esp` still comes from the ini's `sTestFile2`).
+pub fn language_plugins(data: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(data) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = Vec::new();
+    let mut lower: BTreeSet<String> = BTreeSet::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        lower.insert(name.to_ascii_lowercase());
+        names.push(name);
+    }
+    let wanted = |name: &String| {
+        name.to_ascii_lowercase().ends_with("_lang.esp")
+            && first_bytes(&data.join(name), 0x1000).is_some_and(|head| {
+                masters(&head)
+                    .iter()
+                    .all(|master| lower.contains(&master.to_ascii_lowercase()))
+            })
+    };
+    let mut out: Vec<String> = names.into_iter().filter(wanted).collect();
+    out.sort_by_key(|n| n.to_ascii_lowercase());
+    out
+}
+
+/// The `plugins.txt` lines for the game's own language plugins ([`language_plugins`]).
+pub fn language_list(data: &Path) -> String {
+    language_plugins(data)
+        .into_iter()
+        .map(|name| format!("{name}\r\n"))
+        .collect()
+}
+
 fn link_tree(from: &Path, to: &Path) -> std::io::Result<u64> {
     std::fs::create_dir_all(to)?;
     let mut count = 0;
@@ -172,7 +223,8 @@ pub fn classify(code: Option<i32>, linking: bool) -> Failure {
 }
 
 /// Makes `install` (removed first) from the game's folder and `mods`, and writes the plugin list
-/// to `plugins_txt`: `mods\plugins.txt` as it is when there is one, else [`plugin_list`].
+/// to `plugins_txt`: `mods\plugins.txt` as it is when there is one, else [`plugin_list`] with the
+/// game's own language plugins ([`language_list`]) after it.
 pub fn build_install(
     game: &Path,
     mods: &Path,
@@ -230,7 +282,11 @@ pub fn build_install(
     built.mod_files = files.len();
     let list = match std::fs::read(mods.join("plugins.txt")) {
         Ok(own) => own,
-        Err(_) => plugin_list(&plugins).into_bytes(),
+        Err(_) => {
+            let mut text = plugin_list(&plugins);
+            text.push_str(&language_list(&data));
+            text.into_bytes()
+        }
     };
     if let Some(parent) = plugins_txt.parent() {
         std::fs::create_dir_all(parent).map_err(|e| describe("making", parent, e))?;
@@ -346,6 +402,66 @@ mod tests {
         let built = build_install(&game, &mods, &install, &plugins).unwrap();
         assert!(built.extender_plugins);
         assert_eq!(std::fs::read(&plugins).unwrap(), b"Own order.esp\r\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The game's own language plugins, with their masters: one whose master isn't there stays
+    /// off (the game would stop on it), and a mod's file is not a language plugin.
+    #[test]
+    fn the_language_plugins_come_from_the_data_folder() {
+        let dir = std::env::temp_dir().join(format!("nv-rs-lang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let data = dir.join("Data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("FalloutNV.esm"), b"esm").unwrap();
+        std::fs::write(data.join("DeadMoney.esm"), b"esm").unwrap();
+        std::fs::write(data.join("FalloutNV_lang.ESP"), plugin(&["FalloutNV.esm"])).unwrap();
+        std::fs::write(
+            data.join("DeadMoney_lang.esp"),
+            plugin(&["DeadMoney.esm", "FalloutNV.esm"]),
+        )
+        .unwrap();
+        std::fs::write(
+            data.join("HonestHearts_lang.esp"),
+            plugin(&["HonestHearts.esm"]),
+        )
+        .unwrap();
+        std::fs::write(data.join("Mod.esp"), plugin(&["FalloutNV.esm"])).unwrap();
+        std::fs::write(data.join("Sound_lang.txt"), b"not a plugin").unwrap();
+        assert_eq!(
+            language_list(&data),
+            "DeadMoney_lang.esp\r\nFalloutNV_lang.ESP\r\n"
+        );
+        // An English install: nothing to switch on, so no list at all.
+        assert_eq!(language_list(&dir.join("elsewhere")), "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The mods install lists them too; the player's own `mods\plugins.txt` still wins as it is.
+    #[test]
+    fn the_mods_list_adds_the_language_plugins() {
+        let dir = std::env::temp_dir().join(format!("nv-rs-mods-lang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (game, mods, install) = (dir.join("game"), dir.join("mods"), dir.join("install"));
+        std::fs::create_dir_all(game.join("Data")).unwrap();
+        std::fs::write(game.join("FalloutNV.exe"), b"exe").unwrap();
+        std::fs::write(game.join("Data\\FalloutNV.esm"), b"esm").unwrap();
+        std::fs::write(
+            game.join("Data\\FalloutNV_lang.esp"),
+            plugin(&["FalloutNV.esm"]),
+        )
+        .unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("Mine.esp"), plugin(&["FalloutNV.esm"])).unwrap();
+        let plugins = dir.join("plugins.txt");
+        build_install(&game, &mods, &install, &plugins).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&plugins).unwrap(),
+            "Mine.esp\r\nFalloutNV_lang.esp\r\n"
+        );
+        std::fs::write(mods.join("plugins.txt"), b"Mine.esp\r\n").unwrap();
+        build_install(&game, &mods, &install, &plugins).unwrap();
+        assert_eq!(std::fs::read(&plugins).unwrap(), b"Mine.esp\r\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

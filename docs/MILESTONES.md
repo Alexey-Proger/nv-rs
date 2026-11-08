@@ -33,7 +33,9 @@ starting. Rounding differences found by the audit are left to it, since it rewri
 
 An interim Windows preview (maintainer, 2026-11-06) can be built with `scripts/package-playtest.ps1`:
 a ZIP a player can run with no build, labelled a preview, wgpu remaining the big release. It has only
-run on this PC; the maintainer decides on a release ([testers' checklist](PREVIEW_TESTERS.md)).
+run on this PC; the maintainer decides on a release ([testers' checklist](PREVIEW_TESTERS.md)). Since
+2026-11-08 the preview switches on the game's own language plugins, so a non-English copy keeps its
+DLC text in its language too (docs/HANDOFF.md); packaging that into a ZIP is the maintainer's call.
 
 | Area | Goal |
 | --- | --- |
