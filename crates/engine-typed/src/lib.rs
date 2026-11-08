@@ -17,7 +17,6 @@
 
 pub mod culling;
 pub mod lockfree;
-pub mod pathing;
 
 /// Declares a class of the game once: a marker type with its PC size and fields at their PC offsets
 /// (as [`engine_core::layout!`] does), and beside it a `#[repr(C)]` struct of the same bytes, whose
@@ -68,7 +67,6 @@ pub mod units {
     pub fn funcs(_out: &mut Vec<(u32, engine_core::AbiFn)>) {
         engine_core::typed::provide(&crate::lockfree::LOCKFREE);
         engine_core::typed::provide(&crate::culling::CULLING);
-        engine_core::typed::provide(&crate::pathing::PATHING);
     }
 }
 
